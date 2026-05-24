@@ -4,7 +4,7 @@ Chatbot RAG multilingue sur la transformation numérique.
 
 ## 🚀 Demo en ligne
 
-[![Streamlit App](https://chatbot-transformation-numerique-agsziruiaqpsgipms7tpr9.streamlit.app/)
+[![Streamlit App](https://chatbot-transformation-numerique-agsziruiaqpsgipms7tpr9.streamlit.app/)]
 
 ## 🛠️ Stack technique
 
