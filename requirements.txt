@@ -5,5 +5,7 @@ qdrant-client==1.8.2
 langchain==0.2.0
 langchain-community==0.2.0
 pypdf==4.2.0
-setuptools>=69.5.1
+torch==2.2.2
+transformers==4.41.2
+setuptools
 wheel
