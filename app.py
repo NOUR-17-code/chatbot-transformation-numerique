@@ -1,15 +1,11 @@
 import streamlit as st
 from groq import Groq
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams, PointStruct
-from pypdf import PdfReader
-import requests
-import uuid
+from sentence_transformers import SentenceTransformer
 
 # =========================
 # PAGE CONFIG
 # =========================
-
 st.set_page_config(
     page_title="RAG Chatbot",
     page_icon="🤖",
@@ -17,159 +13,93 @@ st.set_page_config(
 )
 
 st.title("🤖 Chatbot Transformation Numérique")
-st.markdown("### PDF Assistant avec Groq + Qdrant")
+st.markdown("*Propulsé par BAAI/bge-m3 · Qdrant Cloud · Groq Llama 3.3 70B*")
 
 # =========================
 # API KEYS
 # =========================
-
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 QDRANT_URL = st.secrets["QDRANT_URL"]
 QDRANT_API_KEY = st.secrets["QDRANT_API_KEY"]
 
-# =========================
-# CLIENTS
-# =========================
-
-groq_client = Groq(api_key=GROQ_API_KEY)
-
-qdrant = QdrantClient(
-    url=QDRANT_URL,
-    api_key=QDRANT_API_KEY
-)
-
-COLLECTION_NAME = "rag_collection"
+COLLECTION_NAME = "transformation_numerique"  # ✅ Correct
 
 # =========================
-# CREATE COLLECTION
+# CLIENTS (cached)
 # =========================
+@st.cache_resource
+def load_models():
+    embed = SentenceTransformer('BAAI/bge-m3')
+    qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+    groq = Groq(api_key=GROQ_API_KEY)
+    return embed, qdrant, groq
 
-try:
-    qdrant.get_collection(COLLECTION_NAME)
+embed_model, qdrant_client, groq_client = load_models()
 
-except:
-    qdrant.create_collection(
+# =========================
+# RAG FUNCTIONS
+# =========================
+def search(query, top_k=5):
+    vec = embed_model.encode(query, normalize_embeddings=True).tolist()
+    return qdrant_client.search(
         collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(
-            size=1024,
-            distance=Distance.COSINE
-        )
+        query_vector=vec,
+        limit=top_k,
+        with_payload=True
     )
 
-# =========================
-# EMBEDDING FUNCTION
-# =========================
-
-def get_embedding(text):
-
-    response = requests.post(
-        "https://api-inference.huggingface.co/pipeline/feature-extraction/BAAI/bge-m3",
-        headers={},
-        json={"inputs": text}
+def generate(query, results):
+    context = "\n---\n".join([
+        f"[{r.payload['source'].split('/')[-1]}]\n{r.payload['text']}"
+        for r in results
+    ])
+    resp = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content":
+             "Tu es un expert en transformation numérique et consulting. "
+             "Réponds en français, de façon claire et structurée, "
+             "uniquement à partir du contexte fourni. "
+             "Si l'info n'est pas dans le contexte, dis-le clairement."},
+            {"role": "user", "content": f"Contexte:\n{context}\n\nQuestion: {query}"}
+        ],
+        temperature=0.3,
+        max_tokens=1024
     )
-
-    embedding = response.json()
-
-    return embedding[0]
+    return resp.choices[0].message.content
 
 # =========================
-# PDF UPLOAD
+# CHAT INTERFACE
 # =========================
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-uploaded_file = st.file_uploader(
-    "📄 Upload PDF",
-    type="pdf"
-)
+# Afficher historique
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-if uploaded_file:
+# Input
+if prompt := st.chat_input("Posez votre question sur la transformation numérique..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-    reader = PdfReader(uploaded_file)
+    with st.chat_message("assistant"):
+        with st.spinner("🔍 Recherche en cours..."):
+            results = search(prompt)
+            answer = generate(prompt, results)
+            st.markdown(answer)
 
-    text = ""
+            sources = list(set([
+                r.payload['source'].split('/')[-1]
+                for r in results
+            ]))
+            with st.expander("📚 Sources utilisées"):
+                for s in sources:
+                    st.write(f"• {s}")
 
-    for page in reader.pages:
-        text += page.extract_text()
-
-    st.success("✅ PDF chargé")
-
-    # =========================
-    # CHUNKS
-    # =========================
-
-    chunks = []
-
-    chunk_size = 500
-
-    for i in range(0, len(text), chunk_size):
-        chunks.append(text[i:i+chunk_size])
-
-    st.info(f"📚 {len(chunks)} chunks créés")
-
-    # =========================
-    # STORE IN QDRANT
-    # =========================
-
-    points = []
-
-    for chunk in chunks:
-
-        vector = get_embedding(chunk)
-
-        points.append(
-            PointStruct(
-                id=str(uuid.uuid4()),
-                vector=vector,
-                payload={"text": chunk}
-            )
-        )
-
-    qdrant.upsert(
-        collection_name=COLLECTION_NAME,
-        points=points
-    )
-
-    st.success("✅ Données stockées dans Qdrant")
-
-    # =========================
-    # QUESTION
-    # =========================
-
-    question = st.text_input("💬 Posez votre question")
-
-    if question:
-
-        question_vector = get_embedding(question)
-
-        search_result = qdrant.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=question_vector,
-            limit=3
-        )
-
-        context = "\n".join(
-            [hit.payload["text"] for hit in search_result]
-        )
-
-        prompt = f"""
-        Réponds à la question en utilisant ce contexte :
-
-        {context}
-
-        Question :
-        {question}
-        """
-
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        )
-
-        answer = response.choices[0].message.content
-
-        st.markdown("## 🤖 Réponse")
-        st.write(answer)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer
+        })
