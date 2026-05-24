@@ -41,16 +41,19 @@ embed_model, qdrant_client, groq_client = load_models()
 # =========================
 def search(query, top_k=5):
     vec = embed_model.encode(query, normalize_embeddings=True).tolist()
-    return qdrant_client.search(
+    
+    results = qdrant_client.query_points(
         collection_name=COLLECTION_NAME,
-        query_vector=vec,
+        query=vec,
         limit=top_k,
         with_payload=True
-    )
+    ).points
+    
+    return results
 
 def generate(query, results):
     context = "\n---\n".join([
-        f"[{r.payload['source'].split('/')[-1]}]\n{r.payload['text']}"
+        f"{r.payload.get('text', '')}"
         for r in results
     ])
     resp = groq_client.chat.completions.create(
@@ -59,8 +62,7 @@ def generate(query, results):
             {"role": "system", "content":
              "Tu es un expert en transformation numérique et consulting. "
              "Réponds en français, de façon claire et structurée, "
-             "uniquement à partir du contexte fourni. "
-             "Si l'info n'est pas dans le contexte, dis-le clairement."},
+             "uniquement à partir du contexte fourni."},
             {"role": "user", "content": f"Contexte:\n{context}\n\nQuestion: {query}"}
         ],
         temperature=0.3,
@@ -91,13 +93,11 @@ if prompt := st.chat_input("Posez votre question sur la transformation numériqu
             answer = generate(prompt, results)
             st.markdown(answer)
 
-            sources = list(set([
-                r.payload['source'].split('/')[-1]
-                for r in results
-            ]))
             with st.expander("📚 Sources utilisées"):
-                for s in sources:
-                    st.write(f"• {s}")
+                for r in results:
+                    source = r.payload.get('source', 'Document')
+                    source = source.split('/')[-1]
+                    st.write(f"• {source}")
 
         st.session_state.messages.append({
             "role": "assistant",
