@@ -1,8 +1,5 @@
 sentence-transformers
 qdrant-client
 groq
-langchain
-langchain-community
+streamlit
 pypdf
-torch
-transformers
