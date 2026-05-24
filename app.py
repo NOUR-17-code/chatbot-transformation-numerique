@@ -1,14 +1,13 @@
 import streamlit as st
 from groq import Groq
-from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
+import requests
 import uuid
 
 # =========================
-# CONFIG
+# PAGE CONFIG
 # =========================
 
 st.set_page_config(
@@ -17,8 +16,8 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🤖 Chatbot RAG Multilingue")
-st.markdown("### 🇫🇷 🇬🇧 🇲🇦 PDF Assistant avec Groq + Qdrant + BGE-M3")
+st.title("🤖 Chatbot Transformation Numérique")
+st.markdown("### PDF Assistant avec Groq + Qdrant")
 
 # =========================
 # API KEYS
@@ -39,12 +38,6 @@ qdrant = QdrantClient(
     api_key=QDRANT_API_KEY
 )
 
-# =========================
-# EMBEDDING MODEL
-# =========================
-
-model = SentenceTransformer("BAAI/bge-m3")
-
 COLLECTION_NAME = "rag_collection"
 
 # =========================
@@ -62,6 +55,22 @@ except:
             distance=Distance.COSINE
         )
     )
+
+# =========================
+# EMBEDDING FUNCTION
+# =========================
+
+def get_embedding(text):
+
+    response = requests.post(
+        "https://api-inference.huggingface.co/pipeline/feature-extraction/BAAI/bge-m3",
+        headers={},
+        json={"inputs": text}
+    )
+
+    embedding = response.json()
+
+    return embedding[0]
 
 # =========================
 # PDF UPLOAD
@@ -84,23 +93,17 @@ if uploaded_file:
     st.success("✅ PDF chargé")
 
     # =========================
-    # SPLIT TEXT
+    # CHUNKS
     # =========================
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50
-    )
+    chunks = []
 
-    chunks = splitter.split_text(text)
+    chunk_size = 500
+
+    for i in range(0, len(text), chunk_size):
+        chunks.append(text[i:i+chunk_size])
 
     st.info(f"📚 {len(chunks)} chunks créés")
-
-    # =========================
-    # EMBEDDINGS
-    # =========================
-
-    vectors = model.encode(chunks).tolist()
 
     # =========================
     # STORE IN QDRANT
@@ -108,12 +111,14 @@ if uploaded_file:
 
     points = []
 
-    for i, chunk in enumerate(chunks):
+    for chunk in chunks:
+
+        vector = get_embedding(chunk)
 
         points.append(
             PointStruct(
                 id=str(uuid.uuid4()),
-                vector=vectors[i],
+                vector=vector,
                 payload={"text": chunk}
             )
         )
@@ -133,10 +138,8 @@ if uploaded_file:
 
     if question:
 
-        # Embedding question
-        question_vector = model.encode(question).tolist()
+        question_vector = get_embedding(question)
 
-        # Search
         search_result = qdrant.search(
             collection_name=COLLECTION_NAME,
             query_vector=question_vector,
@@ -148,9 +151,8 @@ if uploaded_file:
         )
 
         prompt = f"""
-        Réponds à la question en utilisant uniquement le contexte suivant.
+        Réponds à la question en utilisant ce contexte :
 
-        Contexte :
         {context}
 
         Question :
@@ -170,5 +172,4 @@ if uploaded_file:
         answer = response.choices[0].message.content
 
         st.markdown("## 🤖 Réponse")
-
         st.write(answer)
