@@ -1,0 +1,7 @@
+streamlit
+langchain
+langchain-community
+pypdf
+groq
+setuptools
+wheel
