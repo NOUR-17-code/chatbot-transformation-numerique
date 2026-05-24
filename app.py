@@ -1,5 +1,4 @@
 import streamlit as st
-from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from groq import Groq
 
@@ -16,7 +15,6 @@ st.caption("Propulsé par BAAI/bge-m3 · Qdrant Cloud · Groq Llama 3.3 70B")
 # ── Chargement modèles (cache)
 @st.cache_resource
 def load_models():
-    embed = SentenceTransformer('BAAI/bge-m3')
     qdrant = QdrantClient(
         url=st.secrets["QDRANT_URL"],
         api_key=st.secrets["QDRANT_API_KEY"]
